@@ -94,7 +94,7 @@ if PRINT_HANDLE:
         print '   sensor_broken         -> ' + str(tracker._port_handles[n]._sensor_broken)
         print '   sensor_status         -> ' + str(tracker._port_handles[n]._sensor_status)
         print '   ------------------------------'
-        print '   x  = ' + str(tracker._port_handlereadlines[n]._trans[0])
+        print '   x  = ' + str(tracker._port_handles[n]._trans[0])
         print '   y  = ' + str(tracker._port_handles[n]._trans[1])
         print '   z  = ' + str(tracker._port_handles[n]._trans[2])
         print '   q0 = ' + str(tracker._port_handles[n]._quaternion[0])

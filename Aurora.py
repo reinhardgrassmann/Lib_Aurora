@@ -18,6 +18,9 @@ Update March 2021:
 Update December 2021:
 - force write function to flush its buffer by using f.flush() and os.fsync
 - this allows storing multiple measurement in the right order
+
+Updated October 2022 (By Spencer Teetaert, spencer.teetaert@mail.utoronto.ca):
+- Updated for Python 3 support 
 """
 
 
@@ -54,7 +57,7 @@ class Aurora:
     TT_PRIORITY_DYNAMIC = 'D'
     TT_PRIORITY_BUTTON  = 'B'
 
-    def __init__(self, serial_port='/dev/ttyUSB0', timeout=1, baud_rat=9600):
+    def __init__(self, serial_port='/dev/ttyUSB0', timeout=1, baud_rat=9600, verbose=True):
         # depending on operating system.e.g. / dev / ttyUSB0 on GNU / Linux or COM3 on Windows.
         self._serial_port = serial_port  # serial(serial_port)
         self._baud_rat = baud_rat
@@ -69,6 +72,7 @@ class Aurora:
         self._isConnected = self._serial_object.isOpen()
         self._timeout = timeout
         self._device_init = False
+        self._verbose = verbose
 
         self.setBaudRate(baud_rate=baud_rat)
 
@@ -106,10 +110,10 @@ class Aurora:
             }.get(self._baud_rat, 0.1)
 
         time.sleep(sec)
-        self._serial_object.write(cmd + '\r')
+        self._serial_object.write(str.encode(cmd + '\r'))
         if get_replay:
             self._serial_object.flush()
-            return self._serial_object.readline()
+            return self._serial_object.readline().decode()
         else:
             return None
 
@@ -241,7 +245,7 @@ class Aurora:
             if msg_sought:
                 return msg_i
 
-            if msg_i is not '1D4C1':
+            if msg_i != '1D4C1':
                 if len(msg_i) >= 4:
                     if msg_i[:4] == 'ERRO':
                         self.printErrorMessage(msg_i)
@@ -268,28 +272,29 @@ class Aurora:
 
         while True:
             #self._serial_object.flush()
-            #reply = self._serial_object.readline()
+            #reply = self._serial_object.readline().decode()
             #print repr(reply)
 
             bytes2read = self._serial_object.inWaiting()
             reply = self._serial_object.read(bytes2read)
 
             if nth_trial == trials:
-                print("\033[93m" +
-                      "Warring (systemAntwort): reply maybe wrong." +
-                      " \033[0m")
+                if self._verbose:
+                    print("\033[93m" +
+                        "Warring (systemAntwort): reply maybe wrong." +
+                        " \033[0m")
                 break
             else:
                 nth_trial += 1
 
             if len(reply) >= 4:
-                if reply[:4] == 'ERRO':
+                if reply[:4] == b'ERRO':
                     self.printErrorMessage(reply)
                     continue
-                elif reply[:4] == 'OKAY':
+                elif reply[:4] == b'OKAY':
                     continue
 
-            if reply is not '':
+            if reply != b'':
                 break
 
             time.sleep(sec)
@@ -417,9 +422,10 @@ class Aurora:
         found_n = int(msg[:2], 16)
 
         if self._n_port_handles is not found_n:
-            print("\033[93m" +
-                  "Warring (portHandles_updateStatusAll): Number of tools has been changed." +
-                  " \033[0m")
+            if self._verbose:
+                print("\033[93m" +
+                    "Warring (portHandles_updateStatusAll): Number of tools has been changed." +
+                    " \033[0m")
 
         for idx_found in range(found_n):
             s = 2 + 5*idx_found
@@ -475,9 +481,11 @@ class Aurora:
         elif len(stringBytes) == 2:
             return int("{0:b}".format(stringBytes[1]) + "{0:b}".format(stringBytes[0]), 2)
         else:
-            print("\033[93m" +
-                  "Warring (unpackBytes): return is None " + stringMsg +
-                  " \033[0m")
+            if self._verbose:
+                print("NIT", stringBytes)
+                print("\033[93m" +
+                    "Warring (unpackBytes): return is None " + stringMsg +
+                    " \033[0m")
             return None
 
     def portHandles_int2hex(self, value_int):
@@ -505,6 +513,8 @@ class Aurora:
             self._BX('0801', get_replay=False)
             # self._serial_object.write('BX 0801\x0d')
             reply_ba = self.systemAntwort()
+            if reply_ba is None: 
+                return 
 
             # Start Sequence (A5C4) has 2 bytes. First two bytes.
             start_sequence = self.unpackBytes(reply_ba[0:2], 'start_sequence')
@@ -519,6 +529,9 @@ class Aurora:
             num_handle_reads = self.unpackBytes(reply_ba[6:7], 'num_handle_reads')
             # print('num_handle_reads = ' + str(num_handle_reads))
 
+            if num_handle_reads is None: # Handles None case 
+                num_handle_reads = 0
+
             for idx_reads in range(num_handle_reads):
                 # Get next position s in bytearray
                 s = 8 + 42 * idx_reads
@@ -530,10 +543,12 @@ class Aurora:
                 found_status = self.unpackBytes(reply_ba[s:s+1], 'found_status')
 
                 if found_status == 2:
-                    print("\033[93m Handle status of " + found_ID + " is 2: Missing \033[0m")
+                    if self._verbose:
+                        print("\033[93m Handle status of " + found_ID + " is 2: Missing \033[0m")
                     break
                 elif found_status == 4:
-                    print("\033[93m Handle status of " + found_ID + " is 2: Disabled \033[0m")
+                    if self._verbose:
+                        print("\033[93m Handle status of " + found_ID + " is 2: Disabled \033[0m")
                     break
 
                 # ########### -- Debug
@@ -550,24 +565,24 @@ class Aurora:
                     if found_ID == self._port_handles[idx].portHandle_ID:
                         # Updates quaternion
                         self._port_handles[idx].updateRot(np.array([
-                            struct.unpack('<f', str(reply_ba[s+1:s+5]))[0],
-                            struct.unpack('<f', str(reply_ba[s+5:s+9]))[0],
-                            struct.unpack('<f', str(reply_ba[s+9:s+13]))[0],
-                            struct.unpack('<f', str(reply_ba[s+13:s+17]))[0]
+                            struct.unpack('<f', reply_ba[s+1:s+5])[0],
+                            struct.unpack('<f', reply_ba[s+5:s+9])[0],
+                            struct.unpack('<f', reply_ba[s+9:s+13])[0],
+                            struct.unpack('<f', reply_ba[s+13:s+17])[0]
                         ]))
 
                         # Updates position
                         self._port_handles[idx].updateTrans(np.array([
-                            struct.unpack('<f', str(reply_ba[s + 17:s + 21]))[0],
-                            struct.unpack('<f', str(reply_ba[s + 21:s + 25]))[0],
-                            struct.unpack('<f', str(reply_ba[s + 25:s + 29]))[0]
+                            struct.unpack('<f', reply_ba[s + 17:s + 21])[0],
+                            struct.unpack('<f', reply_ba[s + 21:s + 25])[0],
+                            struct.unpack('<f', reply_ba[s + 25:s + 29])[0]
                         ]))
 
-                        self._port_handles[idx].updateError(struct.unpack('f', str(reply_ba[s+29:s+33]))[0])
-                        sensorStatus = hex(struct.unpack('I', str(reply_ba[s + 33:s + 37]))[0])
+                        self._port_handles[idx].updateError(struct.unpack('f', reply_ba[s+29:s+33])[0])
+                        sensorStatus = hex(struct.unpack('I', reply_ba[s + 33:s + 37])[0])
                         self._port_handles[idx].updateStatusComplete(sensorStatus)
                         self._port_handles[idx].updateSensorStatus(sensorStatus)
-                        self._port_handles[idx].updateFrameNumber(struct.unpack('I', str(reply_ba[s+37:s+41]))[0])
+                        self._port_handles[idx].updateFrameNumber(struct.unpack('I', reply_ba[s+37:s+41])[0])
                         break
 
     def sensorData_write_FileName(self, path, name):
@@ -614,6 +629,19 @@ class Aurora:
             os.fsync(self._port_measurements[ith_port_handel].fileno())
             # time.sleep(0.1)
             # print("\033[93m" + "the " + str(n) + "-th data of port_handle nb " + str(ith_port_handel) + " was stored" + " \033[0m")
+
+    def sensorData_get(self, data_wrt_Ref=False):
+        ret = []
+        for ith_port_handel in range(self._n_port_handles):
+            # q0, q1, q2, q3, x, y, z, error, frame, port_handle, ldfNr, time
+            if data_wrt_Ref:
+                q, t = self.transformation_measurement2ref(ith_port_handel)
+            else:
+                q = self._port_handles[ith_port_handel].getRot()
+                t = self._port_handles[ith_port_handel].getTrans()
+
+            ret += [[q, t]]
+        return ret
 
     def sensorData_collectData(self, n_times=10):
         # Collect Data and afterwards compute average/least square
